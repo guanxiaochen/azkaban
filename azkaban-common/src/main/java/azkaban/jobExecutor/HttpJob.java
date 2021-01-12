@@ -78,11 +78,11 @@ public class HttpJob extends AbstractJob {
     String method = jobProps.getString(METHOD, "GET");
     String headers = jobProps.getString(HEADERS, "");
 
-    this.info("HTTP url: " + url);
     HttpRequestBase httpRequest;
     if (HTTP_POST.equals(method)) {
       String body = jobProps.getString(BODY, "");
       // put together an URL
+      this.info("HTTP POST url: " + url);
       final HttpPost httpPost = new HttpPost(url);
       if (!body.isEmpty()) {
         info("HTTP body: " + body);
@@ -91,6 +91,7 @@ public class HttpJob extends AbstractJob {
       httpRequest = httpPost;
     } else if (HTTP_GET.equals(method)) {
       // GET
+      this.info("HTTP GET url: " + url);
       httpRequest = new HttpGet(url);
     } else {
       throw new UndefinedPropertyException("Unsupported request method: " + method + ". Only POST and GET are supported");
