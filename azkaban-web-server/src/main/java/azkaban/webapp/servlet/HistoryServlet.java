@@ -19,12 +19,14 @@ package azkaban.webapp.servlet;
 import azkaban.executor.ExecutableFlow;
 import azkaban.executor.ExecutorManagerAdapter;
 import azkaban.executor.ExecutorManagerException;
+import azkaban.executor.HistoryFlow;
 import azkaban.project.ProjectManager;
 import azkaban.server.session.Session;
 import azkaban.webapp.AzkabanWebServer;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
+import java.util.stream.Collectors;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -79,6 +81,34 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
   private void fetchHistoryData(final HttpServletRequest req,
       final HttpServletResponse resp, final HashMap<String, Object> ret)
       throws ServletException {
+    int pageNum = getIntParam(req, "page", 1);
+    final int pageSize = getIntParam(req, "size", getDisplayExecutionPageSize());
+    try {
+      List<ExecutableFlow> history;
+      if (hasParam(req, "advfilter")) {
+        final String projContain = getParam(req, "projcontain");
+        final String flowContain = getParam(req, "flowcontain");
+        final String userContain = getParam(req, "usercontain");
+        final int status = getIntParam(req, "status");
+
+        final String begin = getParam(req, "begin");
+        final long beginTime = "".equals(begin) ? -1 : DateTimeFormat.forPattern(FILTER_BY_DATE_PATTERN).parseDateTime(begin).getMillis();
+
+        final String end = getParam(req, "end");
+        final long endTime = "".equals(end) ? -1 : DateTimeFormat.forPattern(FILTER_BY_DATE_PATTERN).parseDateTime(end).getMillis();
+
+        history = this.executorManagerAdapter.getExecutableFlows(projContain, flowContain, userContain,
+                status, beginTime, endTime, (pageNum - 1) * pageSize, pageSize);
+      } else if (hasParam(req, "searchterm") && !getParam(req, "searchterm").isEmpty()) {
+        final String searchTerm = getParam(req, "searchterm");
+        history = this.executorManagerAdapter.getExecutableFlows(searchTerm, (pageNum - 1) * pageSize, pageSize);
+      } else {
+        history = this.executorManagerAdapter.getExecutableFlows((pageNum - 1) * pageSize, pageSize);
+      }
+      ret.put("history", history.stream().map(HistoryFlow::new).collect(Collectors.toList()));
+    } catch (final ExecutorManagerException e) {
+      e.printStackTrace();
+    }
   }
 
   private void handleHistoryPage(final HttpServletRequest req,
