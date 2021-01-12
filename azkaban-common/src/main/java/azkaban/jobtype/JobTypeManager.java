@@ -17,6 +17,7 @@
 package azkaban.jobtype;
 
 import azkaban.Constants;
+import azkaban.jobExecutor.HttpJob;
 import azkaban.jobExecutor.JavaProcessJob;
 import azkaban.jobExecutor.Job;
 import azkaban.jobExecutor.NoopJob;
@@ -80,6 +81,7 @@ public class JobTypeManager {
     plugins.addPluginClass("command", ProcessJob.class);
     plugins.addPluginClass("javaprocess", JavaProcessJob.class);
     plugins.addPluginClass("noop", NoopJob.class);
+    plugins.addPluginClass("http", HttpJob.class);
   }
 
   // load Job Types from jobtype plugin dir
