@@ -1,11 +1,9 @@
 package azkaban.executor;
 
-import azkaban.flow.ConditionOnJobStatus;
-import azkaban.utils.Props;
+import java.util.List;
+import java.util.stream.Collectors;
 
-import java.util.Set;
-
-public class HistoryFlow {
+public class HistoryFlow extends HistoryNode{
     private final int executionId;
     private final int scheduleId;
     private final int projectId;
@@ -21,28 +19,10 @@ public class HistoryFlow {
     private final boolean isLocked;
     private final String flowLockErrorMessage;
 
-
-
-    private final String id;
-    private final String type;
-    private final Status status;
-    private final long startTime;
-    private final long endTime;
-    private final long updateTime;
-    // Path to Job File
-    private final String jobSource;
-    // Path to top level props file
-    private final String propsSource;
-    private final Set<String> inNodes;
-    private final Set<String> outNodes;
-    private final Props inputProps;
-    private final Props outputProps;
-    private final Props rampProps;
-    private final long delayExecution;
-    private final String condition;
-    private final ConditionOnJobStatus conditionOnJobStatus;
+    private final List<HistoryNode> nodes;
 
     public HistoryFlow(ExecutableFlow flow) {
+        super(flow);
         this.executionId = flow.getExecutionId();
         this.scheduleId = flow.getScheduleId();
         this.projectId = flow.getProjectId();
@@ -57,22 +37,7 @@ public class HistoryFlow {
         this.azkabanFlowVersion = flow.getAzkabanFlowVersion();
         this.isLocked = flow.isLocked();
         this.flowLockErrorMessage = flow.getFlowLockErrorMessage();
-        this.id = flow.getId();
-        this.type = flow.getType();
-        this.status = flow.getStatus();
-        this.startTime = flow.getStartTime();
-        this.endTime = flow.getEndTime();
-        this.updateTime = flow.getUpdateTime();
-        this.jobSource = flow.getJobSource();
-        this.propsSource = flow.getPropsSource();
-        this.inNodes = flow.getInNodes();
-        this.outNodes = flow.getOutNodes();
-        this.inputProps = flow.getInputProps();
-        this.outputProps = flow.getOutputProps();
-        this.rampProps = flow.getRampProps();
-        this.delayExecution = flow.getDelayedExecution();
-        this.condition = flow.getCondition();
-        this.conditionOnJobStatus = flow.getConditionOnJobStatus();
+        this.nodes = flow.getExecutableNodes().stream().map(HistoryNode::new).collect(Collectors.toList());
     }
 
     public int getExecutionId() {
@@ -131,67 +96,7 @@ public class HistoryFlow {
         return flowLockErrorMessage;
     }
 
-    public String getId() {
-        return id;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public Status getStatus() {
-        return status;
-    }
-
-    public long getStartTime() {
-        return startTime;
-    }
-
-    public long getEndTime() {
-        return endTime;
-    }
-
-    public long getUpdateTime() {
-        return updateTime;
-    }
-
-    public String getJobSource() {
-        return jobSource;
-    }
-
-    public String getPropsSource() {
-        return propsSource;
-    }
-
-    public Set<String> getInNodes() {
-        return inNodes;
-    }
-
-    public Set<String> getOutNodes() {
-        return outNodes;
-    }
-
-    public Props getInputProps() {
-        return inputProps;
-    }
-
-    public Props getOutputProps() {
-        return outputProps;
-    }
-
-    public Props getRampProps() {
-        return rampProps;
-    }
-
-    public long getDelayExecution() {
-        return delayExecution;
-    }
-
-    public String getCondition() {
-        return condition;
-    }
-
-    public ConditionOnJobStatus getConditionOnJobStatus() {
-        return conditionOnJobStatus;
+    public List<HistoryNode> getNodes() {
+        return nodes;
     }
 }

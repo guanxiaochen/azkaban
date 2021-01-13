@@ -100,7 +100,7 @@ public class HttpJob extends AbstractJob {
     Header[] httpHeaders = parseHttpHeaders(headers);
     if (httpHeaders != null) {
       httpRequest.setHeaders(httpHeaders);
-      info("# of headers found: " + httpHeaders.length);
+      info("HTTP headers size: " + httpHeaders.length);
 
       final SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z");
       format.setTimeZone(TimeZone.getTimeZone("GMT"));
