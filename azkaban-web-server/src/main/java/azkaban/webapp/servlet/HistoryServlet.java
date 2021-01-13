@@ -17,15 +17,20 @@
 package azkaban.webapp.servlet;
 
 import azkaban.executor.ExecutableFlow;
+import azkaban.executor.ExecutableNode;
 import azkaban.executor.ExecutorManagerAdapter;
 import azkaban.executor.ExecutorManagerException;
 import azkaban.executor.HistoryFlow;
+import azkaban.executor.Status;
 import azkaban.project.ProjectManager;
 import azkaban.server.session.Session;
 import azkaban.webapp.AzkabanWebServer;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LongSummaryStatistics;
+import java.util.Map;
 import java.util.stream.Collectors;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -71,6 +76,8 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
 
     if (ajaxName.equals("fetch")) {
       fetchHistoryData(req, resp, ret);
+    } else if (ajaxName.equals("flowStats")) {
+      fetchFlowStats(req, resp, ret);
     }
 
     if (ret != null) {
@@ -79,22 +86,22 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
   }
 
   private void fetchHistoryData(final HttpServletRequest req,
-      final HttpServletResponse resp, final HashMap<String, Object> ret)
-      throws ServletException {
+                                final HttpServletResponse resp, final HashMap<String, Object> ret)
+          throws ServletException {
     int pageNum = getIntParam(req, "page", 1);
     final int pageSize = getIntParam(req, "size", getDisplayExecutionPageSize());
     try {
       List<ExecutableFlow> history;
       if (hasParam(req, "advfilter")) {
-        final String projContain = getParam(req, "projcontain");
-        final String flowContain = getParam(req, "flowcontain");
-        final String userContain = getParam(req, "usercontain");
-        final int status = getIntParam(req, "status");
+        final String projContain = getParam(req, "projcontain", null);
+        final String flowContain = getParam(req, "flowcontain", null);
+        final String userContain = getParam(req, "usercontain", null);
+        final int status = getIntParam(req, "status", 0);
 
-        final String begin = getParam(req, "begin");
+        final String begin = getParam(req, "begin", "");
         final long beginTime = "".equals(begin) ? -1 : DateTimeFormat.forPattern(FILTER_BY_DATE_PATTERN).parseDateTime(begin).getMillis();
 
-        final String end = getParam(req, "end");
+        final String end = getParam(req, "end", "");
         final long endTime = "".equals(end) ? -1 : DateTimeFormat.forPattern(FILTER_BY_DATE_PATTERN).parseDateTime(end).getMillis();
 
         history = this.executorManagerAdapter.getExecutableFlows(projContain, flowContain, userContain,
@@ -106,6 +113,64 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
         history = this.executorManagerAdapter.getExecutableFlows((pageNum - 1) * pageSize, pageSize);
       }
       ret.put("history", history.stream().map(HistoryFlow::new).collect(Collectors.toList()));
+    } catch (final ExecutorManagerException e) {
+      e.printStackTrace();
+    }
+  }
+
+  private void fetchFlowStats(final HttpServletRequest req,
+                          final HttpServletResponse resp, final HashMap<String, Object> ret)
+          throws ServletException {
+    int pageNum = 1;
+    final int pageSize = 5000;
+    try {
+
+      final String projContain = getParam(req, "projcontain", null);
+      final String flowContain = getParam(req, "flowcontain", null);
+      final String userContain = getParam(req, "usercontain", null);
+      final int status = getIntParam(req, "status", 0);
+
+      final String begin = getParam(req, "begin", "");
+      final long beginTime = "".equals(begin) ? -1 : DateTimeFormat.forPattern(FILTER_BY_DATE_PATTERN).parseDateTime(begin).getMillis();
+
+      final String end = getParam(req, "end", "");
+      final long endTime = "".equals(end) ? -1 : DateTimeFormat.forPattern(FILTER_BY_DATE_PATTERN).parseDateTime(end).getMillis();
+
+      Map<Status, Integer> flowStatsMap = new HashMap<>();
+      Map<Status, Integer> jobStatsMap = new HashMap<>();
+      Map<String, List<Long>> flowTimeMap = new HashMap<>();
+      Map<String, List<Long>> jobTimeMap = new HashMap<>();
+
+      List<ExecutableFlow> executableFlows;
+      do {
+        executableFlows = this.executorManagerAdapter.getExecutableFlows(projContain, flowContain, userContain,
+                status, beginTime, endTime, (pageNum++ - 1) * pageSize, pageSize);
+        for (ExecutableFlow executableFlow : executableFlows) {
+          flowStatsMap.merge(executableFlow.getStatus(), 1, Integer::sum);
+          long flowUseTime = executableFlow.getEndTime() - executableFlow.getStartTime();
+          flowTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId(), k -> new ArrayList<>()).add(flowUseTime);
+
+          for (ExecutableNode executableNode : executableFlow.getExecutableNodes()) {
+            jobStatsMap.merge(executableNode.getStatus(), 1, Integer::sum);
+            long jobUseTime = executableNode.getEndTime() - executableNode.getStartTime();
+            jobTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId() + "." + executableNode.getId(), k -> new ArrayList<>()).add(jobUseTime);
+          }
+        }
+      } while (!executableFlows.isEmpty());
+
+      Map<String, LongSummaryStatistics> flowTimeStatsMap = new HashMap<>();
+      for (Map.Entry<String, List<Long>> stringListEntry : flowTimeMap.entrySet()) {
+        flowTimeStatsMap.put(stringListEntry.getKey(), stringListEntry.getValue().stream().mapToLong(i -> i).summaryStatistics());
+      }
+      Map<String, LongSummaryStatistics> jobTimeStatsMap = new HashMap<>();
+      for (Map.Entry<String, List<Long>> stringListEntry : jobTimeMap.entrySet()) {
+        jobTimeStatsMap.put(stringListEntry.getKey(), stringListEntry.getValue().stream().mapToLong(i -> i).summaryStatistics());
+      }
+
+      ret.put("flowStats", flowStatsMap);
+      ret.put("jobStats", jobStatsMap);
+      ret.put("flowTimes", flowTimeStatsMap);
+      ret.put("jobTimes", jobTimeStatsMap);
     } catch (final ExecutorManagerException e) {
       e.printStackTrace();
     }
