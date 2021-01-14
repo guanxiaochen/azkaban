@@ -27,6 +27,7 @@ import azkaban.executor.ExecutionOptions.FailureAction;
 import azkaban.executor.Executor;
 import azkaban.executor.ExecutorManagerAdapter;
 import azkaban.executor.ExecutorManagerException;
+import azkaban.executor.HistoryFlow;
 import azkaban.executor.Status;
 import azkaban.flow.Flow;
 import azkaban.flow.FlowUtils;
@@ -57,6 +58,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -173,6 +175,8 @@ public class ExecutorServlet extends LoginAbstractAzkabanServlet {
       final String flowName = getParam(req, "flow");
       ajaxFetchFlowInfo(req, resp, ret, session.getUser(), projectName,
           flowName);
+    } else if (ajaxName.equals("executions")) {
+      ajaxFetchExecutions(req, resp, ret, session.getUser());
     } else {
       final String projectName = getParam(req, "project");
 
@@ -732,6 +736,18 @@ public class ExecutorServlet extends LoginAbstractAzkabanServlet {
     }
     ret.put("nodeStatus", nodeStatus);
     ret.put("disabled", options.getDisabledJobs());
+  }
+
+
+  private void ajaxFetchExecutions(final HttpServletRequest req, final HttpServletResponse resp,
+                                   final HashMap<String, Object> ret, final User user) throws  IOException {
+    final List<Pair<ExecutableFlow, Optional<Executor>>> runningFlows =
+            this.executorManagerAdapter.getActiveFlowsWithExecutor();
+    final List<HistoryFlow> executableFlows = runningFlows.stream().map(item->new HistoryFlow(item.getFirst())).collect(Collectors.toList());
+    ret.put("runningFlows", executableFlows);
+
+    final List<ExecutableFlow> finishedFlows = this.executorManagerAdapter.getRecentlyFinishedFlows();
+    ret.put("finishedFlows", finishedFlows.stream().map(HistoryFlow::new).collect(Collectors.toList()));
   }
 
   private void ajaxCancelFlow(final HttpServletRequest req, final HttpServletResponse resp,
