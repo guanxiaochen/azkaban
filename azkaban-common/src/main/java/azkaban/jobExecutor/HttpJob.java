@@ -38,7 +38,9 @@ import org.apache.log4j.Logger;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 
 /**
@@ -112,13 +114,11 @@ public class HttpJob extends AbstractJob {
         throw new RuntimeException("HTTP execute error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase());
       }
       String failEval = jobProps.getString(FAIL_EVAL, "");
-      if (!StringUtils.isEmpty(failEval)) {
-        if (JSONPath.contains(content, failEval)) {
-          return;
-        }
-      }
       String successEval = jobProps.getString(SUCCESS_EVAL, "");
-      success = StringUtils.isEmpty(successEval) || JSONPath.contains(content, successEval);
+      success = StringUtils.isEmpty(successEval) || isContainsEval(content, successEval);
+      if (success && !StringUtils.isEmpty(failEval) && isContainsEval(content, failEval)) {
+        success = false;
+      }
       if (success && jobProps.containsKey(STATUS_PREFIX + URL)) {
         success = checkStatus(httpClient);
       }
@@ -130,6 +130,20 @@ public class HttpJob extends AbstractJob {
               + (success ? "successfully" : "unsuccessfully") + " in "
               + ((System.currentTimeMillis() - startMs) / 1000) + " seconds.");
     }
+  }
+
+  private boolean isContainsEval(String content, String eval) {
+    Object extract = JSONPath.extract(content, eval);
+    if (extract == null) {
+      return false;
+    }
+    if (extract instanceof Collection) {
+      return !((Collection<?>) extract).isEmpty();
+    }
+    if (extract instanceof Map) {
+      return !((Map<?, ?>) extract).isEmpty();
+    }
+    return true;
   }
 
   private boolean checkStatus(HttpClient httpClient) throws IOException {
@@ -160,10 +174,10 @@ public class HttpJob extends AbstractJob {
       if (statusCode / 100 == 4 || statusCode / 100 == 5) {
         throw new RuntimeException("HTTP checkStatus execute error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase());
       }
-      if (!StringUtils.isEmpty(failEval) && JSONPath.contains(content, failEval)) {
+      if (!StringUtils.isEmpty(failEval) && isContainsEval(content, failEval)) {
         return false;
       }
-      if (JSONPath.contains(content, successEval)) {
+      if (isContainsEval(content, successEval)) {
         return true;
       }
     }
