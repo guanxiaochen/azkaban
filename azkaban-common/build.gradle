@@ -19,6 +19,8 @@ dependencies {
     compile project(':azkaban-db')
     compile project(':cached-http-filesystem')
 
+    compile("com.alibaba:fastjson:1.2.73")
+
     compile deps.collections
     compile deps.dbcp2
     compile deps.dbutils

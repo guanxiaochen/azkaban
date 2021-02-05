@@ -17,7 +17,9 @@
 package azkaban.jobExecutor;
 
 import azkaban.utils.Props;
+import azkaban.utils.StringUtils;
 import azkaban.utils.UndefinedPropertyException;
+import com.alibaba.fastjson.JSONPath;
 import org.apache.commons.io.IOUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpEntity;
@@ -33,12 +35,10 @@ import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.message.BasicHeader;
 import org.apache.log4j.Logger;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
-import java.util.TimeZone;
 
 
 /**
@@ -59,8 +59,13 @@ public class HttpJob extends AbstractJob {
   public static final String REQUEST_TIMEOUT = "requestTimeout";
   public static final String CONNECTION_TIMEOUT = "connectionTimeout";
   public static final String SOCKET_TIMEOUT = "connectionTimeout";
+  public static final String SUCCESS_EVAL = "successEval";
+  public static final String FAIL_EVAL = "failEval";
+  public static final String STATUS_PREFIX = "status.";
+  public static final String STATUS_INTERVAL = "status.interval";
 
   protected Props jobProps;
+  protected boolean isCancel = false;
 
 
   public HttpJob(String jobId, Props sysProps, Props jobProps, Logger log) {
@@ -74,19 +79,111 @@ public class HttpJob extends AbstractJob {
 
   @Override
   public void run() throws Exception {
-    String url = jobProps.getString(URL);
-    String method = jobProps.getString(METHOD, "GET");
-    String headers = jobProps.getString(HEADERS, "");
+    HttpRequestBase httpRequest = getHttpRequest("");
+
+    final int timeout = jobProps.getInt(TIMEOUT, 3000);
+    final int connectionRequestTimeout = jobProps.getInt(REQUEST_TIMEOUT, timeout);
+    final int connectionTimeout = jobProps.getInt(CONNECTION_TIMEOUT, timeout);
+    final int socketTimeout = jobProps.getInt(SOCKET_TIMEOUT, timeout);
+
+    final RequestConfig requestConfig = RequestConfig.custom()
+            .setConnectionRequestTimeout(connectionRequestTimeout)
+            .setConnectTimeout(connectionTimeout)
+            .setSocketTimeout(socketTimeout).build();
+
+    final HttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
+
+    final long startMs = System.currentTimeMillis();
+
+    boolean success = false;
+    try {
+      HttpResponse httpResponse = httpClient.execute(httpRequest, HttpClientContext.create());
+      int statusCode = httpResponse.getStatusLine().getStatusCode();
+
+      HttpEntity entity = httpResponse.getEntity();
+      String content = null;
+      if (entity != null) {
+        content = IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8);
+        this.info("HTTP response [" + content + "]");
+      } else {
+        this.info("HTTP No response");
+      }
+      if (statusCode / 100 == 4 || statusCode / 100 == 5) {
+        throw new RuntimeException("HTTP execute error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase());
+      }
+      String failEval = jobProps.getString(FAIL_EVAL, "");
+      if (!StringUtils.isEmpty(failEval)) {
+        if (JSONPath.contains(content, failEval)) {
+          return;
+        }
+      }
+      String successEval = jobProps.getString(SUCCESS_EVAL, "");
+      success = StringUtils.isEmpty(successEval) || JSONPath.contains(content, successEval);
+      if (success && jobProps.containsKey(STATUS_PREFIX + URL)) {
+        success = checkStatus(httpClient);
+      }
+      if (!success) {
+        throw new RuntimeException("Job execute failed ");
+      }
+    } finally {
+      info("HTTP " + getId() + " completed "
+              + (success ? "successfully" : "unsuccessfully") + " in "
+              + ((System.currentTimeMillis() - startMs) / 1000) + " seconds.");
+    }
+  }
+
+  private boolean checkStatus(HttpClient httpClient) throws IOException {
+    long interval = jobProps.getLong(STATUS_INTERVAL, 1000);
+    String failEval = jobProps.getString(STATUS_PREFIX + FAIL_EVAL, "");
+    String successEval = jobProps.getString(STATUS_PREFIX + SUCCESS_EVAL);
+    if (StringUtils.isEmpty(failEval)) {
+      throw new UndefinedPropertyException("Configuration required " + STATUS_PREFIX + SUCCESS_EVAL);
+    }
+    this.info("HTTP check status interval:" + interval + ", successEval:" + successEval + ", failEval:" + failEval);
+    HttpRequestBase httpRequest = getHttpRequest(STATUS_PREFIX);
+    while (!isCancel) {
+      try {
+        Thread.sleep(interval);
+      } catch (InterruptedException ignored) {
+      }
+      HttpResponse httpResponse = httpClient.execute(httpRequest, HttpClientContext.create());
+      int statusCode = httpResponse.getStatusLine().getStatusCode();
+
+      HttpEntity entity = httpResponse.getEntity();
+      String content = null;
+      if (entity != null) {
+        content = IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8);
+        this.info("HTTP checkStatus response [" + content + "]");
+      } else {
+        this.info("HTTP checkStatus No response");
+      }
+      if (statusCode / 100 == 4 || statusCode / 100 == 5) {
+        throw new RuntimeException("HTTP checkStatus execute error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase());
+      }
+      if (!StringUtils.isEmpty(failEval) && JSONPath.contains(content, failEval)) {
+        return false;
+      }
+      if (JSONPath.contains(content, successEval)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private HttpRequestBase getHttpRequest(String prefix) {
+    String url = jobProps.getString(prefix + URL);
+    String method = jobProps.getString(prefix + METHOD, "GET");
+    String headers = jobProps.getString(prefix + HEADERS, "");
 
     HttpRequestBase httpRequest;
     if (HTTP_POST.equals(method)) {
-      String body = jobProps.getString(BODY, "");
+      String body = jobProps.getString(prefix + BODY, "");
       // put together an URL
       this.info("HTTP POST url: " + url);
       final HttpPost httpPost = new HttpPost(url);
       if (!body.isEmpty()) {
         info("HTTP body: " + body);
-        httpPost.setEntity(new StringEntity(body));
+        httpPost.setEntity(new StringEntity(body, StandardCharsets.UTF_8));
       }
       httpRequest = httpPost;
     } else if (HTTP_GET.equals(method)) {
@@ -101,47 +198,8 @@ public class HttpJob extends AbstractJob {
     if (httpHeaders != null) {
       httpRequest.setHeaders(httpHeaders);
       info("HTTP headers size: " + httpHeaders.length);
-
-      final SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z");
-      format.setTimeZone(TimeZone.getTimeZone("GMT"));
-      httpRequest.addHeader(new BasicHeader("Date", format.format(new Date())));
     }
-
-    final int timeout = jobProps.getInt(TIMEOUT, 3000);
-    final int connectionRequestTimeout = jobProps.getInt(REQUEST_TIMEOUT, timeout);
-    final int connectionTimeout = jobProps.getInt(CONNECTION_TIMEOUT, timeout);
-    final int socketTimeout = jobProps.getInt(SOCKET_TIMEOUT, timeout);
-
-    final RequestConfig requestConfig = RequestConfig.custom()
-                    .setConnectionRequestTimeout(connectionRequestTimeout)
-                    .setConnectTimeout(connectionTimeout)
-                    .setSocketTimeout(socketTimeout).build();
-
-    final HttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
-
-    final long startMs = System.currentTimeMillis();
-
-    boolean success = false;
-    try {
-      HttpResponse httpResponse = httpClient.execute(httpRequest, HttpClientContext.create());
-      int statusCode = httpResponse.getStatusLine().getStatusCode();
-
-      HttpEntity entity = httpResponse.getEntity();
-      if (entity != null) {
-        String content = IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8);
-        this.info("HTTP response [" + content + "]");
-      } else {
-        this.info("HTTP No response");
-      }
-      if (statusCode / 100 == 4 || statusCode / 100 == 5) {
-        throw new RuntimeException("HTTP execute error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase());
-      }
-      success = true;
-    } finally {
-      info("HTTP " + getId() + " completed "
-              + (success ? "successfully" : "unsuccessfully") + " in "
-              + ((System.currentTimeMillis() - startMs) / 1000) + " seconds.");
-    }
+    return httpRequest;
   }
 
   /**
@@ -165,4 +223,17 @@ public class HttpJob extends AbstractJob {
     }
     return headerList.toArray(new Header[0]);
   }
+
+  @Override
+  public void cancel() throws Exception {
+    isCancel = true;
+    super.cancel();
+  }
+
+  @Override
+  public boolean isCanceled() {
+    return isCancel;
+  }
+
+
 }
