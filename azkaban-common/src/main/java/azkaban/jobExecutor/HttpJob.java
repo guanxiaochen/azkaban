@@ -35,7 +35,6 @@ import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.message.BasicHeader;
 import org.apache.log4j.Logger;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -65,6 +64,7 @@ public class HttpJob extends AbstractJob {
   public static final String FAIL_EVAL = "failEval";
   public static final String STATUS_PREFIX = "status.";
   public static final String STATUS_INTERVAL = "status.interval";
+  public static final String STATUS_MAX_RETRIES = "status.max-retries";
 
   protected Props jobProps;
   protected boolean isCancel = false;
@@ -115,12 +115,11 @@ public class HttpJob extends AbstractJob {
       }
       String failEval = jobProps.getString(FAIL_EVAL, "");
       String successEval = jobProps.getString(SUCCESS_EVAL, "");
-      success = StringUtils.isEmpty(successEval) || isContainsEval(content, successEval);
-      if (success && !StringUtils.isEmpty(failEval) && isContainsEval(content, failEval)) {
-        success = false;
-      }
+      this.info("HTTP validate successEval:" + successEval + ", failEval:" + failEval);
+      success = StringUtils.isEmpty(failEval) || !isContainsEvals(content, failEval.split(","));
+      success = success && (StringUtils.isEmpty(successEval) || isContainsEvals(content, successEval.split(",")));
       if (success && jobProps.containsKey(STATUS_PREFIX + URL)) {
-        success = checkStatus(httpClient);
+        success = checkStatus();
       }
       if (!success) {
         throw new RuntimeException("Job execute failed ");
@@ -132,8 +131,29 @@ public class HttpJob extends AbstractJob {
     }
   }
 
+  private boolean isContainsEvals(String content, String[] evals) {
+    if (evals.length == 1) {
+      return isContainsEval(content, evals[0]);
+    } else {
+      for (String eval : evals) {
+        if (!eval.trim().isEmpty()) {
+          if (isContainsEval(content, eval)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+  }
+
   private boolean isContainsEval(String content, String eval) {
-    Object extract = JSONPath.extract(content, eval);
+    Object extract;
+    try {
+      extract = JSONPath.extract(content, eval);
+    } catch (Exception e) {
+      this.warn("JSONPath eval error: " + e.getMessage());
+      return false;
+    }
     if (extract == null) {
       return false;
     }
@@ -146,13 +166,29 @@ public class HttpJob extends AbstractJob {
     return true;
   }
 
-  private boolean checkStatus(HttpClient httpClient) throws IOException {
+  private boolean checkStatus() {
     long interval = jobProps.getLong(STATUS_INTERVAL, 1000);
+    int maxRetries = jobProps.getInt(STATUS_MAX_RETRIES, 3);
     String failEval = jobProps.getString(STATUS_PREFIX + FAIL_EVAL, "");
     String successEval = jobProps.getString(STATUS_PREFIX + SUCCESS_EVAL);
     if (StringUtils.isEmpty(failEval)) {
       throw new UndefinedPropertyException("Configuration required " + STATUS_PREFIX + SUCCESS_EVAL);
     }
+
+    final int timeout = jobProps.getInt(STATUS_PREFIX + TIMEOUT, 30000);
+    final int connectionRequestTimeout = jobProps.getInt(STATUS_PREFIX + REQUEST_TIMEOUT, timeout);
+    final int connectionTimeout = jobProps.getInt(STATUS_PREFIX + CONNECTION_TIMEOUT, timeout);
+    final int socketTimeout = jobProps.getInt(STATUS_PREFIX + SOCKET_TIMEOUT, timeout);
+
+    final RequestConfig requestConfig = RequestConfig.custom()
+            .setConnectionRequestTimeout(connectionRequestTimeout)
+            .setConnectTimeout(connectionTimeout)
+            .setSocketTimeout(socketTimeout).build();
+
+    final HttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
+
+    int allTimes = 0;
+    int errorTimes = 0;
     this.info("HTTP check status interval:" + interval + ", successEval:" + successEval + ", failEval:" + failEval);
     HttpRequestBase httpRequest = getHttpRequest(STATUS_PREFIX);
     while (!isCancel) {
@@ -160,25 +196,31 @@ public class HttpJob extends AbstractJob {
         Thread.sleep(interval);
       } catch (InterruptedException ignored) {
       }
-      HttpResponse httpResponse = httpClient.execute(httpRequest, HttpClientContext.create());
-      int statusCode = httpResponse.getStatusLine().getStatusCode();
+      try {
+        HttpResponse httpResponse = httpClient.execute(httpRequest, HttpClientContext.create());
+        int statusCode = httpResponse.getStatusLine().getStatusCode();
 
-      HttpEntity entity = httpResponse.getEntity();
-      String content = null;
-      if (entity != null) {
-        content = IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8);
-        this.info("HTTP checkStatus response [" + content + "]");
-      } else {
-        this.info("HTTP checkStatus No response");
-      }
-      if (statusCode / 100 == 4 || statusCode / 100 == 5) {
-        throw new RuntimeException("HTTP checkStatus execute error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase());
-      }
-      if (!StringUtils.isEmpty(failEval) && isContainsEval(content, failEval)) {
-        return false;
-      }
-      if (isContainsEval(content, successEval)) {
-        return true;
+        HttpEntity entity = httpResponse.getEntity();
+        String content = entity == null ? null : IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8);
+        if (statusCode / 100 == 4 || statusCode / 100 == 5) {
+          throw new RuntimeException("HTTP job status check error, status：" + statusCode + ", message: " + httpResponse.getStatusLine().getReasonPhrase() + ", response [" + content + "]");
+        }
+        if (!StringUtils.isEmpty(failEval) && isContainsEvals(content, failEval.split(","))) {
+          this.info("HTTP job status check response [" + content + "]");
+          return false;
+        }
+        if (isContainsEvals(content, successEval.split(","))) {
+          this.info("HTTP job status check response [" + content + "]");
+          return true;
+        }
+        errorTimes = 0;
+      } catch (Exception e) {
+        this.info("HTTP job status check error: " + e.getMessage());
+        if (++errorTimes > maxRetries) {
+          return false;
+        }
+      } finally {
+        this.info("HTTP job status checked " + (++allTimes) + " times");
       }
     }
     return false;
