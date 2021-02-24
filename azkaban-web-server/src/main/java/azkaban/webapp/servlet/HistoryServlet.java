@@ -147,13 +147,17 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
                 status, beginTime, endTime, (pageNum++ - 1) * pageSize, pageSize);
         for (ExecutableFlow executableFlow : executableFlows) {
           flowStatsMap.merge(executableFlow.getStatus(), 1, Integer::sum);
-          long flowUseTime = executableFlow.getEndTime() - executableFlow.getStartTime();
-          flowTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId(), k -> new ArrayList<>()).add(flowUseTime);
+          if (executableFlow.getEndTime() != -1) {
+            long flowUseTime = executableFlow.getEndTime() - executableFlow.getStartTime();
+            flowTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId(), k -> new ArrayList<>()).add(flowUseTime);
+          }
 
           for (ExecutableNode executableNode : executableFlow.getExecutableNodes()) {
             jobStatsMap.merge(executableNode.getStatus(), 1, Integer::sum);
-            long jobUseTime = executableNode.getEndTime() - executableNode.getStartTime();
-            jobTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId() + "." + executableNode.getId(), k -> new ArrayList<>()).add(jobUseTime);
+            if (executableNode.getEndTime() != -1) {
+              long jobUseTime = executableNode.getEndTime() - executableNode.getStartTime();
+              jobTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId() + "." + executableNode.getId(), k -> new ArrayList<>()).add(jobUseTime);
+            }
           }
         }
       } while (!executableFlows.isEmpty());

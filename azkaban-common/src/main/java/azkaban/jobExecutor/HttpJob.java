@@ -282,6 +282,7 @@ public class HttpJob extends AbstractJob {
 
   @Override
   public void cancel() throws Exception {
+    this.info("HTTP job cancelling... ");
     isCancel = true;
     super.cancel();
   }
