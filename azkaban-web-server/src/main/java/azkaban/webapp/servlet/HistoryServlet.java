@@ -138,8 +138,8 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
 
       Map<Status, Integer> flowStatsMap = new HashMap<>();
       Map<Status, Integer> jobStatsMap = new HashMap<>();
-      Map<String, List<Long>> flowTimeMap = new HashMap<>();
-      Map<String, List<Long>> jobTimeMap = new HashMap<>();
+      Map<String, Statistics> flowTimeMap = new HashMap<>();
+      Map<String, Statistics> jobTimeMap = new HashMap<>();
 
       List<ExecutableFlow> executableFlows;
       do {
@@ -149,34 +149,39 @@ public class HistoryServlet extends LoginAbstractAzkabanServlet {
           flowStatsMap.merge(executableFlow.getStatus(), 1, Integer::sum);
           if (executableFlow.getEndTime() != -1) {
             long flowUseTime = executableFlow.getEndTime() - executableFlow.getStartTime();
-            flowTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId(), k -> new ArrayList<>()).add(flowUseTime);
+            flowTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId(), k -> new Statistics()).addStatus(executableFlow.getStatus(), flowUseTime);
           }
 
           for (ExecutableNode executableNode : executableFlow.getExecutableNodes()) {
             jobStatsMap.merge(executableNode.getStatus(), 1, Integer::sum);
             if (executableNode.getEndTime() != -1) {
               long jobUseTime = executableNode.getEndTime() - executableNode.getStartTime();
-              jobTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId() + "." + executableNode.getId(), k -> new ArrayList<>()).add(jobUseTime);
+              jobTimeMap.computeIfAbsent(executableFlow.getProjectName() + "." + executableFlow.getId() + "." + executableNode.getId(), k -> new Statistics()).addStatus(executableNode.getStatus(), jobUseTime);
             }
           }
         }
       } while (!executableFlows.isEmpty());
 
-      Map<String, LongSummaryStatistics> flowTimeStatsMap = new HashMap<>();
-      for (Map.Entry<String, List<Long>> stringListEntry : flowTimeMap.entrySet()) {
-        flowTimeStatsMap.put(stringListEntry.getKey(), stringListEntry.getValue().stream().mapToLong(i -> i).summaryStatistics());
-      }
-      Map<String, LongSummaryStatistics> jobTimeStatsMap = new HashMap<>();
-      for (Map.Entry<String, List<Long>> stringListEntry : jobTimeMap.entrySet()) {
-        jobTimeStatsMap.put(stringListEntry.getKey(), stringListEntry.getValue().stream().mapToLong(i -> i).summaryStatistics());
-      }
 
       ret.put("flowStats", flowStatsMap);
       ret.put("jobStats", jobStatsMap);
-      ret.put("flowTimes", flowTimeStatsMap);
-      ret.put("jobTimes", jobTimeStatsMap);
+      ret.put("flowTimes", flowTimeMap);
+      ret.put("jobTimes", jobTimeMap);
     } catch (final ExecutorManagerException e) {
       e.printStackTrace();
+    }
+  }
+
+  public static class Statistics extends LongSummaryStatistics {
+    private final Map<Status, Integer> stats = new HashMap<>();
+
+    public void addStatus(Status status, long useTime) {
+      stats.merge(status, 1, Integer::sum);
+      this.accept(useTime);
+    }
+
+    public Map<Status, Integer> getStats() {
+      return stats;
     }
   }
 
